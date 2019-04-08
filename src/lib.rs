@@ -3,13 +3,10 @@ use nom::*;
 use std::collections::hash_map::HashMap;
 
 /// An error kind returned from the parser.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Error<'a> {
     /// Returned when nom fails to parse a .htaccess file.
     ParseError { error: Err<Input<'a>> },
-
-    /// Returned if nom didn't consume the entire .htaccess file.
-    GarbageAtEnd(Input<'a>),
 }
 
 impl<'a> From<Err<Input<'a>>> for Error<'a> {
@@ -70,7 +67,8 @@ named!(
 );
 
 named!(entries<Input, HashMap<&str, PasswordHash>>,
-       do_parse!(entries: complete!(terminated!(separated_list!(tag!("\n"), entry), opt!(line_ending))) >>
+       do_parse!(entries: terminated!(separated_list!(tag!("\n"), entry), opt!(line_ending)) >>
+                 eof!() >>
                  (entries.into_iter().collect()))
 );
 
@@ -79,10 +77,7 @@ named!(entries<Input, HashMap<&str, PasswordHash>>,
 pub fn parse_htpasswd_str<'a>(
     contents: &'a str,
 ) -> Result<HashMap<&'a str, PasswordHash<'_>>, Error> {
-    let (rest, entries) = entries(contents.into())?;
-    if !rest.is_empty() {
-        return Err(Error::GarbageAtEnd(rest));
-    }
+    let (_rest, entries) = entries(contents.into())?;
     Ok(entries)
 }
 
@@ -148,5 +143,14 @@ bsf:$2y$05$9U5xoWYrBX687.C.MEhsae5LfOrlUqqMSfE2Cpo4K.jyvy3lA.Ijy",
             )),
             entries.get("bsf")
         );
+    }
+
+    #[test]
+    fn garbage_at_end() {
+        assert!(parse_htpasswd_str(
+            "asf:$2y$05$6mQlzTSUkBbyHDU7XIwQaO3wOEDZpUdYR4YxRXgM2gqe/nwJSy.96
+___"
+        )
+        .is_err());
     }
 }
