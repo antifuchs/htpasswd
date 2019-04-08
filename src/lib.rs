@@ -1,4 +1,4 @@
-use nom::types::CompleteStr;
+use nom::types::CompleteStr as Input;
 use nom::*;
 use std::collections::hash_map::HashMap;
 
@@ -6,14 +6,14 @@ use std::collections::hash_map::HashMap;
 #[derive(Debug)]
 pub enum Error<'a> {
     /// Returned when nom fails to parse a .htaccess file.
-    ParseError { error: Err<&'a str> },
+    ParseError { error: Err<Input<'a>> },
 
     /// Returned if nom didn't consume the entire .htaccess file.
-    GarbageAtEnd(&'a str),
+    GarbageAtEnd(Input<'a>),
 }
 
-impl<'a> From<Err<&'a str>> for Error<'a> {
-    fn from(error: Err<&'a str>) -> Self {
+impl<'a> From<Err<Input<'a>>> for Error<'a> {
+    fn from(error: Err<Input<'a>>) -> Self {
         Error::ParseError { error }
     }
 }
@@ -27,57 +27,59 @@ pub enum PasswordHash<'a> {
     Crypt(&'a str),
 }
 
-named!(bcrypt_pw<&str, PasswordHash>,
+named!(bcrypt_pw<Input, PasswordHash>,
        do_parse!(peek!(alt_complete!(tag!("$2a$") | tag!("$2y$") | tag!("$2b$"))) >>
                  pw: not_line_ending >>
-                 (PasswordHash::Bcrypt(pw))
+                 (PasswordHash::Bcrypt(*pw))
        )
 );
 
-named!(sha1_pw<&str, PasswordHash>,
+named!(sha1_pw<Input, PasswordHash>,
        do_parse!(tag!("{SHA}") >>
                  pw: not_line_ending >>
-                 (PasswordHash::SHA1(pw)))
+                 (PasswordHash::SHA1(*pw)))
 );
 
-named!(md5_pw<&str, PasswordHash>,
+named!(md5_pw<Input, PasswordHash>,
        do_parse!(tag!("$apr1$") >>
                  pw: not_line_ending >>
-                 (PasswordHash::MD5(pw)))
+                 (PasswordHash::MD5(*pw)))
 );
 
-named!(crypt_pw<&str, PasswordHash>,
+named!(crypt_pw<Input, PasswordHash>,
        do_parse!(pw: not_line_ending >>
-                 (PasswordHash::Crypt(pw)))
+                 (PasswordHash::Crypt(*pw)))
 );
 
 named!(
-    password<&str, PasswordHash>,
+    password<Input, PasswordHash>,
     alt_complete!(bcrypt_pw | sha1_pw | md5_pw | crypt_pw)
 );
 
 #[derive(Debug, PartialEq)]
 pub struct Entry<'a> {
-    user: &'a str,
+    user: Input<'a>,
     pw_hash: PasswordHash<'a>,
 }
 
 named!(
-    entry<&str, (&str, PasswordHash)>,
+    entry<Input, (&str, PasswordHash)>,
     do_parse!(user: terminated!(is_not!(":"), tag!(":")) >>
               pw_hash: password >>
-              ((user, pw_hash)))
+              ((*user, pw_hash)))
 );
 
-named!(entries<&str, HashMap<&str, PasswordHash>>,
+named!(entries<Input, HashMap<&str, PasswordHash>>,
        do_parse!(entries: complete!(terminated!(separated_list!(tag!("\n"), entry), opt!(line_ending))) >>
                  (entries.into_iter().collect()))
 );
 
 /// Parses an htpasswd-formatted string and returns the entries in it
 /// as a hash table, mapping user names to password hashes.
-pub fn parse_htpasswd_str(contents: &str) -> Result<HashMap<&str, PasswordHash<'_>>, Error> {
-    let (rest, entries) = entries(contents)?;
+pub fn parse_htpasswd_str<'a>(
+    contents: &'a str,
+) -> Result<HashMap<&'a str, PasswordHash<'_>>, Error> {
+    let (rest, entries) = entries(contents.into())?;
     if !rest.is_empty() {
         return Err(Error::GarbageAtEnd(rest));
     }
@@ -91,36 +93,39 @@ mod tests {
     #[test]
     fn password_tag() {
         assert_eq!(
-            ("", PasswordHash::Bcrypt("$2y$foobar")),
-            password("$2y$foobar").unwrap()
+            ("".into(), PasswordHash::Bcrypt("$2y$foobar".into())),
+            password("$2y$foobar".into()).unwrap()
         );
         assert_eq!(
-            ("\n", PasswordHash::Bcrypt("$2y$foobar")),
-            password("$2y$foobar\n").unwrap()
+            ("\n".into(), PasswordHash::Bcrypt("$2y$foobar".into())),
+            password("$2y$foobar\n".into()).unwrap()
         );
         assert_eq!(
-            ("\r\n", PasswordHash::Bcrypt("$2y$foobar")),
-            password("$2y$foobar\r\n").unwrap()
+            ("\r\n".into(), PasswordHash::Bcrypt("$2y$foobar".into())),
+            password("$2y$foobar\r\n".into()).unwrap()
         );
         assert_eq!(
-            ("\n", PasswordHash::SHA1("foobar")),
-            password("{SHA}foobar\n").unwrap()
+            (Input::from("\n"), PasswordHash::SHA1("foobar".into())),
+            password("{SHA}foobar\n".into()).unwrap()
         );
         assert_eq!(
-            ("\n", PasswordHash::MD5("foobar")),
-            password("$apr1$foobar\n").unwrap()
+            (Input::from("\n"), PasswordHash::MD5("foobar".into())),
+            password("$apr1$foobar\n".into()).unwrap()
         );
         assert_eq!(
-            ("\n", PasswordHash::Crypt("foobar")),
-            password("foobar\n").unwrap()
+            (Input::from("\n"), PasswordHash::Crypt("foobar".into())),
+            password("foobar\n".into()).unwrap()
         );
     }
 
     #[test]
     fn whole_line() {
         assert_eq!(
-            ("\n", ("asf", PasswordHash::Bcrypt("$2y$foobar"))),
-            entry("asf:$2y$foobar\n").unwrap()
+            (
+                "\n".into(),
+                ("asf", PasswordHash::Bcrypt("$2y$foobar".into()))
+            ),
+            entry("asf:$2y$foobar\n".into()).unwrap()
         )
     }
 
@@ -133,13 +138,13 @@ bsf:$2y$05$9U5xoWYrBX687.C.MEhsae5LfOrlUqqMSfE2Cpo4K.jyvy3lA.Ijy",
         .unwrap();
         assert_eq!(
             Some(&PasswordHash::Bcrypt(
-                "$2y$05$6mQlzTSUkBbyHDU7XIwQaO3wOEDZpUdYR4YxRXgM2gqe/nwJSy.96"
+                "$2y$05$6mQlzTSUkBbyHDU7XIwQaO3wOEDZpUdYR4YxRXgM2gqe/nwJSy.96".into()
             )),
             entries.get("asf")
         );
         assert_eq!(
             Some(&PasswordHash::Bcrypt(
-                "$2y$05$9U5xoWYrBX687.C.MEhsae5LfOrlUqqMSfE2Cpo4K.jyvy3lA.Ijy"
+                "$2y$05$9U5xoWYrBX687.C.MEhsae5LfOrlUqqMSfE2Cpo4K.jyvy3lA.Ijy".into()
             )),
             entries.get("bsf")
         );
