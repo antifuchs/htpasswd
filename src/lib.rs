@@ -21,8 +21,11 @@ pub enum Error<'a> {
     /// password storage.
     IncorrectPassword,
 
+    /// Returned if a user tried to authenticate that doesn't exist in
+    /// the `PasswordDB`.
     InvalidUser(&'a str),
 
+    /// Indicates a faulty password hash value.
     StorageError(bcrypt::BcryptError),
 }
 
@@ -59,7 +62,7 @@ impl_from_error!(bcrypt::BcryptError, Error::StorageError);
 
 /// Represents a password hashed with a particular method.
 #[derive(Debug, PartialEq)]
-pub enum PasswordHash<'a> {
+enum PasswordHash<'a> {
     Bcrypt(&'a str),
     SHA1(&'a str),
     MD5(&'a str),
