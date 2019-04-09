@@ -1,19 +1,61 @@
-use nom::types::CompleteStr as Input;
-use nom::*;
+use bcrypt;
+use nom;
 use std::collections::hash_map::HashMap;
 
+// The type to use as input to parsers in this crate.
+pub use nom::types::CompleteStr as Input;
+
+mod parse;
+
 /// An error kind returned from the parser.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum Error<'a> {
-    /// Returned when nom fails to parse a .htaccess file.
-    ParseError { error: Err<Input<'a>> },
+    /// Indicates nom failed to parse a .htaccess file.
+    ParseError(nom::Err<Input<'a>>),
+
+    /// Indicates that a password storage scheme other than bcrypt was
+    /// used.
+    InsecureStorage,
+
+    /// Indicates that the provided password does not match the one in
+    /// password storage.
+    IncorrectPassword,
+
+    InvalidUser(&'a str),
+
+    StorageError(bcrypt::BcryptError),
 }
 
-impl<'a> From<Err<Input<'a>>> for Error<'a> {
-    fn from(error: Err<Input<'a>>) -> Self {
-        Error::ParseError { error }
+impl<'a> PartialEq for Error<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        use Error::*;
+        match (self, other) {
+            (InsecureStorage, InsecureStorage) => true,
+            (IncorrectPassword, IncorrectPassword) => true,
+            (InvalidUser(l), InvalidUser(r)) => l == r,
+            (ParseError(l), ParseError(r)) => l == r,
+
+            // Hack: they don't derive PartialEq, so we assume all
+            // storage errors are the same.
+            (StorageError(_), StorageError(_)) => true,
+
+            (_, _) => false,
+        }
     }
 }
+
+macro_rules! impl_from_error {
+    ($f: ty, $e: expr) => {
+        impl<'a> From<$f> for Error<'a> {
+            fn from(f: $f) -> Self {
+                $e(f)
+            }
+        }
+    };
+}
+
+impl_from_error!(nom::Err<Input<'a>>, Error::ParseError);
+impl_from_error!(bcrypt::BcryptError, Error::StorageError);
 
 /// Represents a password hashed with a particular method.
 #[derive(Debug, PartialEq)]
@@ -24,126 +66,39 @@ pub enum PasswordHash<'a> {
     Crypt(&'a str),
 }
 
-named!(bcrypt_pw<Input, PasswordHash>,
-       do_parse!(peek!(alt_complete!(tag!("$2a$") | tag!("$2y$") | tag!("$2b$"))) >>
-                 pw: not_line_ending >>
-                 (PasswordHash::Bcrypt(*pw))
-       )
-);
+/// An in-memory representation of a `.htpasswd` file.
+pub struct PasswordDB<'a>(HashMap<&'a str, PasswordHash<'a>>);
 
-named!(sha1_pw<Input, PasswordHash>,
-       do_parse!(tag!("{SHA}") >>
-                 pw: not_line_ending >>
-                 (PasswordHash::SHA1(*pw)))
-);
-
-named!(md5_pw<Input, PasswordHash>,
-       do_parse!(tag!("$apr1$") >>
-                 pw: not_line_ending >>
-                 (PasswordHash::MD5(*pw)))
-);
-
-named!(crypt_pw<Input, PasswordHash>,
-       do_parse!(pw: not_line_ending >>
-                 (PasswordHash::Crypt(*pw)))
-);
-
-named!(
-    password<Input, PasswordHash>,
-    alt_complete!(bcrypt_pw | sha1_pw | md5_pw | crypt_pw)
-);
-
-#[derive(Debug, PartialEq)]
-pub struct Entry<'a> {
-    user: Input<'a>,
-    pw_hash: PasswordHash<'a>,
+impl<'a> PasswordDB<'a> {
+    /// Checks the provided username and password against the database
+    /// and returns `Ok(())` if both match. Password mismatches result
+    /// in `Error::IncorrectPassword` and missing users result in
+    /// `Error::InvalidUser`.
+    ///
+    /// Returns `Errors::InsecureStorage` if the user's password hash is
+    /// represented as anything other than bcrypt.
+    pub fn validate(&self, user: &'a str, password: &str) -> Result<(), Error<'a>> {
+        use crate::PasswordHash::*;
+        match self.0.get(user).ok_or_else(|| Error::InvalidUser(user))? {
+            Bcrypt(hash) => match bcrypt::verify(password, hash)? {
+                true => Ok(()),
+                false => Err(Error::IncorrectPassword),
+            },
+            _ => Err(Error::InsecureStorage),
+        }
+    }
 }
-
-named!(
-    entry<Input, (&str, PasswordHash)>,
-    do_parse!(user: terminated!(is_not!(":"), tag!(":")) >>
-              pw_hash: password >>
-              ((*user, pw_hash)))
-);
-
-named!(entries<Input, HashMap<&str, PasswordHash>>,
-       do_parse!(entries: terminated!(separated_list!(tag!("\n"), entry), opt!(line_ending)) >>
-                 eof!() >>
-                 (entries.into_iter().collect()))
-);
 
 /// Parses an htpasswd-formatted string and returns the entries in it
 /// as a hash table, mapping user names to password hashes.
-pub fn parse_htpasswd_str<'a>(
-    contents: &'a str,
-) -> Result<HashMap<&'a str, PasswordHash<'_>>, Error> {
-    let (_rest, entries) = entries(contents.into())?;
-    Ok(entries)
+pub fn parse_htpasswd_str<'a>(contents: &'a str) -> Result<PasswordDB<'a>, Error> {
+    let (_rest, entries) = parse::entries(contents.into())?;
+    Ok(PasswordDB(entries))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn password_tag() {
-        assert_eq!(
-            ("".into(), PasswordHash::Bcrypt("$2y$foobar".into())),
-            password("$2y$foobar".into()).unwrap()
-        );
-        assert_eq!(
-            ("\n".into(), PasswordHash::Bcrypt("$2y$foobar".into())),
-            password("$2y$foobar\n".into()).unwrap()
-        );
-        assert_eq!(
-            ("\r\n".into(), PasswordHash::Bcrypt("$2y$foobar".into())),
-            password("$2y$foobar\r\n".into()).unwrap()
-        );
-        assert_eq!(
-            (Input::from("\n"), PasswordHash::SHA1("foobar".into())),
-            password("{SHA}foobar\n".into()).unwrap()
-        );
-        assert_eq!(
-            (Input::from("\n"), PasswordHash::MD5("foobar".into())),
-            password("$apr1$foobar\n".into()).unwrap()
-        );
-        assert_eq!(
-            (Input::from("\n"), PasswordHash::Crypt("foobar".into())),
-            password("foobar\n".into()).unwrap()
-        );
-    }
-
-    #[test]
-    fn whole_line() {
-        assert_eq!(
-            (
-                "\n".into(),
-                ("asf", PasswordHash::Bcrypt("$2y$foobar".into()))
-            ),
-            entry("asf:$2y$foobar\n".into()).unwrap()
-        )
-    }
-
-    #[test]
-    fn htpasswd_str() {
-        let entries = parse_htpasswd_str(
-            "asf:$2y$05$6mQlzTSUkBbyHDU7XIwQaO3wOEDZpUdYR4YxRXgM2gqe/nwJSy.96
-bsf:$2y$05$9U5xoWYrBX687.C.MEhsae5LfOrlUqqMSfE2Cpo4K.jyvy3lA.Ijy",
-        )
-        .unwrap();
-        assert_eq!(
-            Some(&PasswordHash::Bcrypt(
-                "$2y$05$6mQlzTSUkBbyHDU7XIwQaO3wOEDZpUdYR4YxRXgM2gqe/nwJSy.96".into()
-            )),
-            entries.get("asf")
-        );
-        assert_eq!(
-            Some(&PasswordHash::Bcrypt(
-                "$2y$05$9U5xoWYrBX687.C.MEhsae5LfOrlUqqMSfE2Cpo4K.jyvy3lA.Ijy".into()
-            )),
-            entries.get("bsf")
-        );
-    }
 
     #[test]
     fn garbage_at_end() {
@@ -152,5 +107,24 @@ bsf:$2y$05$9U5xoWYrBX687.C.MEhsae5LfOrlUqqMSfE2Cpo4K.jyvy3lA.Ijy",
 ___"
         )
         .is_err());
+    }
+
+    #[test]
+    fn validate() {
+        let entries = parse_htpasswd_str(
+            "asf:$2y$05$6mQlzTSUkBbyHDU7XIwQaO3wOEDZpUdYR4YxRXgM2gqe/nwJSy.96
+bsf:$2y$05$9U5xoWYrBX687.C.MEhsae5LfOrlUqqMSfE2Cpo4K.jyvy3lA.Ijy",
+        )
+        .unwrap();
+        assert_eq!(Ok(()), entries.validate("asf", "oink"));
+        assert_eq!(Ok(()), entries.validate("bsf", "areisntoiarnstoanrsit"));
+        assert_eq!(
+            Err(Error::IncorrectPassword),
+            entries.validate("asf", "wrong")
+        );
+        assert_eq!(
+            Err(Error::InvalidUser("unperson")),
+            entries.validate("unperson", "unpassword")
+        );
     }
 }
