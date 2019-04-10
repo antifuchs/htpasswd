@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```rust
-//! # fn main() -> Result<(), htpasswd::ParseError<'static>> {
+//! # fn main() -> Result<(), htpasswd::ParseFailure> {
 //! // the password is "secret"
 //! let htpasswd_contents = "username:$2y$05$xT4MzeZJQmgv7XQQGYbf/eP.ING1L9m.iOZF/yUQIYKmYnmEYkfme";
 //! let db = htpasswd::parse_htpasswd_str(htpasswd_contents)?;
@@ -38,7 +38,7 @@ mod errors;
 mod parse;
 
 pub use errors::*;
-pub use parse::ParseError;
+pub use parse::ParseFailure;
 
 /// Represents a password hashed with a particular method.
 #[derive(Debug, PartialEq)]
@@ -75,7 +75,7 @@ impl PasswordDB {
 
 /// Parses an htpasswd-formatted string and returns the entries in it
 /// as a hash table, mapping user names to password hashes.
-pub fn parse_htpasswd_str<'a>(contents: &'a str) -> Result<PasswordDB, ParseError> {
+pub fn parse_htpasswd_str<'a>(contents: &'a str) -> Result<PasswordDB, ParseFailure> {
     let entries = parse::parse_entries(contents)?;
     Ok(PasswordDB(entries))
 }
