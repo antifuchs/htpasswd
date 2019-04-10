@@ -28,4 +28,5 @@ version = "stable"
 
 [dependencies]
 nom = "4.2.3"
+nom_locate = "0.3.1"
 bcrypt = "0.4.0"

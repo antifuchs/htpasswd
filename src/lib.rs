@@ -42,22 +42,22 @@ pub use parse::ParseError;
 
 /// Represents a password hashed with a particular method.
 #[derive(Debug, PartialEq)]
-enum PasswordHash<'a> {
-    Bcrypt(&'a str),
-    SHA1(&'a str),
-    MD5(&'a str),
-    Crypt(&'a str),
+enum PasswordHash {
+    Bcrypt(String),
+    SHA1(String),
+    MD5(String),
+    Crypt(String),
 }
 
 /// An in-memory representation of a `.htpasswd` file.
-pub struct PasswordDB<'a>(HashMap<String, PasswordHash<'a>>);
+pub struct PasswordDB(HashMap<String, PasswordHash>);
 
-impl<'a> PasswordDB<'a> {
+impl PasswordDB {
     /// Checks the provided username and password against the database
     /// and returns `Ok(())` if both match. Otherwise, returns an
     /// error indicating the problem with the provided or the stored
     /// credentials.
-    pub fn validate(&self, user: &'a str, password: &str) -> Result<(), AuthError<'a>> {
+    pub fn validate<'a>(&self, user: &'a str, password: &str) -> Result<(), AuthError<'a>> {
         use crate::PasswordHash::*;
         match self
             .0
@@ -75,8 +75,8 @@ impl<'a> PasswordDB<'a> {
 
 /// Parses an htpasswd-formatted string and returns the entries in it
 /// as a hash table, mapping user names to password hashes.
-pub fn parse_htpasswd_str<'a>(contents: &'a str) -> Result<PasswordDB<'a>, ParseError> {
-    let (_rest, entries) = parse::entries(contents.into())?;
+pub fn parse_htpasswd_str<'a>(contents: &'a str) -> Result<PasswordDB, ParseError> {
+    let entries = parse::parse_entries(contents)?;
     Ok(PasswordDB(entries))
 }
 
