@@ -1,64 +1,44 @@
+//! # `htpasswd` - Load & validate credentials against Apache `.htpasswd` files.
+//!
+//! This crate provides types and functions that are useful for
+//! validating credentials stored in
+//! [`.htpasswd`](https://httpd.apache.org/docs/2.4/misc/password_encryptions.html)
+//! files, as popularized by the Apache web server.
+//!
+//! ## Compatibility
+//!
+//! While `.htpasswd` files allow storing credentials in multiple
+//! formats, this crate supports only the bcrypt password storage
+//! format. Validating credentials against any other scheme (MD5,
+//! SHA1, crypt or plaintext) will result in an authentication error
+//! indicating that the storage format is insecure.
+//!
+//! # Example
+//!
+//! ```rust
+//! # fn main() -> Result<(), htpasswd::ParseError<'static>> {
+//! // the password is "secret"
+//! let htpasswd_contents = "username:$2y$05$xT4MzeZJQmgv7XQQGYbf/eP.ING1L9m.iOZF/yUQIYKmYnmEYkfme";
+//! let db = htpasswd::parse_htpasswd_str(htpasswd_contents)?;
+//! assert_eq!(Ok(()), db.validate("username", "secret"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+
 use bcrypt;
 use nom;
 use std::collections::hash_map::HashMap;
+use std::str;
 
 // The type to use as input to parsers in this crate.
 pub use nom::types::CompleteStr as Input;
 
+mod errors;
 mod parse;
 
-/// An error kind returned from the parser.
-#[derive(Debug)]
-pub enum Error<'a> {
-    /// Indicates nom failed to parse a .htaccess file.
-    ParseError(nom::Err<Input<'a>>),
-
-    /// Indicates that a password storage scheme other than bcrypt was
-    /// used.
-    InsecureStorage,
-
-    /// Indicates that the provided password does not match the one in
-    /// password storage.
-    IncorrectPassword,
-
-    /// Returned if a user tried to authenticate that doesn't exist in
-    /// the `PasswordDB`.
-    InvalidUser(&'a str),
-
-    /// Indicates a faulty password hash value.
-    StorageError(bcrypt::BcryptError),
-}
-
-impl<'a> PartialEq for Error<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        use Error::*;
-        match (self, other) {
-            (InsecureStorage, InsecureStorage) => true,
-            (IncorrectPassword, IncorrectPassword) => true,
-            (InvalidUser(l), InvalidUser(r)) => l == r,
-            (ParseError(l), ParseError(r)) => l == r,
-
-            // Hack: they don't derive PartialEq, so we assume all
-            // storage errors are the same.
-            (StorageError(_), StorageError(_)) => true,
-
-            (_, _) => false,
-        }
-    }
-}
-
-macro_rules! impl_from_error {
-    ($f: ty, $e: expr) => {
-        impl<'a> From<$f> for Error<'a> {
-            fn from(f: $f) -> Self {
-                $e(f)
-            }
-        }
-    };
-}
-
-impl_from_error!(nom::Err<Input<'a>>, Error::ParseError);
-impl_from_error!(bcrypt::BcryptError, Error::StorageError);
+pub use errors::*;
+pub use parse::ParseError;
 
 /// Represents a password hashed with a particular method.
 #[derive(Debug, PartialEq)]
@@ -70,31 +50,32 @@ enum PasswordHash<'a> {
 }
 
 /// An in-memory representation of a `.htpasswd` file.
-pub struct PasswordDB<'a>(HashMap<&'a str, PasswordHash<'a>>);
+pub struct PasswordDB<'a>(HashMap<String, PasswordHash<'a>>);
 
 impl<'a> PasswordDB<'a> {
     /// Checks the provided username and password against the database
-    /// and returns `Ok(())` if both match. Password mismatches result
-    /// in `Error::IncorrectPassword` and missing users result in
-    /// `Error::InvalidUser`.
-    ///
-    /// Returns `Errors::InsecureStorage` if the user's password hash is
-    /// represented as anything other than bcrypt.
-    pub fn validate(&self, user: &'a str, password: &str) -> Result<(), Error<'a>> {
+    /// and returns `Ok(())` if both match. Otherwise, returns an
+    /// error indicating the problem with the provided or the stored
+    /// credentials.
+    pub fn validate(&self, user: &'a str, password: &str) -> Result<(), AuthError<'a>> {
         use crate::PasswordHash::*;
-        match self.0.get(user).ok_or_else(|| Error::InvalidUser(user))? {
+        match self
+            .0
+            .get(user)
+            .ok_or_else(|| BadCredentials::NoSuchUser(user))?
+        {
             Bcrypt(hash) => match bcrypt::verify(password, hash)? {
                 true => Ok(()),
-                false => Err(Error::IncorrectPassword),
+                false => Err(BadCredentials::InvalidPassword)?,
             },
-            _ => Err(Error::InsecureStorage),
+            _ => Err(BadCredentials::InsecureStorage)?,
         }
     }
 }
 
 /// Parses an htpasswd-formatted string and returns the entries in it
 /// as a hash table, mapping user names to password hashes.
-pub fn parse_htpasswd_str<'a>(contents: &'a str) -> Result<PasswordDB<'a>, Error> {
+pub fn parse_htpasswd_str<'a>(contents: &'a str) -> Result<PasswordDB<'a>, ParseError> {
     let (_rest, entries) = parse::entries(contents.into())?;
     Ok(PasswordDB(entries))
 }
@@ -122,11 +103,13 @@ bsf:$2y$05$9U5xoWYrBX687.C.MEhsae5LfOrlUqqMSfE2Cpo4K.jyvy3lA.Ijy",
         assert_eq!(Ok(()), entries.validate("asf", "oink"));
         assert_eq!(Ok(()), entries.validate("bsf", "areisntoiarnstoanrsit"));
         assert_eq!(
-            Err(Error::IncorrectPassword),
+            Err(AuthError::NotAuthenticated(BadCredentials::InvalidPassword)),
             entries.validate("asf", "wrong")
         );
         assert_eq!(
-            Err(Error::InvalidUser("unperson")),
+            Err(AuthError::NotAuthenticated(BadCredentials::NoSuchUser(
+                "unperson"
+            ))),
             entries.validate("unperson", "unpassword")
         );
     }

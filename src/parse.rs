@@ -2,6 +2,24 @@ use super::{Input, PasswordHash};
 use nom::*;
 use std::collections::hash_map::HashMap;
 
+/// A list of things that can go wrong in parsing.
+pub enum ErrorKind {
+    /// Indicates that the first field ("username") was empty.
+    MissingUserName,
+
+    /// Indicates that the ":" separator was not detected on a line.
+    MissingSeparator,
+
+    /// Indicates that entries at the end were missing.
+    GarbageAtEnd,
+
+    /// Additional context about the line that had the error.
+    Line(usize),
+}
+
+/// Indicates nom failed to parse a .htaccess file.
+pub type ParseError<'a> = nom::Err<Input<'a>>;
+
 named!(bcrypt_pw<Input, PasswordHash>,
        do_parse!(peek!(alt_complete!(tag!("$2a$") | tag!("$2y$") | tag!("$2b$"))) >>
                  pw: not_line_ending >>
@@ -32,13 +50,13 @@ named!(
 );
 
 named!(
-    entry<Input, (&str, PasswordHash)>,
+    entry<Input, (String, PasswordHash)>,
     do_parse!(user: terminated!(is_not!(":"), tag!(":")) >>
               pw_hash: password >>
-              ((*user, pw_hash)))
+              ((user.to_string(), pw_hash)))
 );
 
-named!(pub(crate) entries<Input, HashMap<&str, PasswordHash>>,
+named!(pub(crate) entries<Input, HashMap<String, PasswordHash>>,
        do_parse!(entries: terminated!(separated_list!(tag!("\n"), entry), opt!(line_ending)) >>
                  eof!() >>
                  (entries.into_iter().collect()))
@@ -81,7 +99,7 @@ mod tests {
         assert_eq!(
             (
                 "\n".into(),
-                ("asf", PasswordHash::Bcrypt("$2y$foobar".into()))
+                ("asf".to_string(), PasswordHash::Bcrypt("$2y$foobar".into()))
             ),
             entry("asf:$2y$foobar\n".into()).unwrap()
         )
