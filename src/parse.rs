@@ -142,7 +142,7 @@ pub struct ParseFailure {
     pub column: usize,
 }
 
-impl Default for ParseFailure {
+impl ParseFailure {
     fn default() -> Self {
         ParseFailure {
             kind: ParseErrorKind::Unknown,
