@@ -16,10 +16,10 @@
 //! # Example
 //!
 //! ```rust
-//! # fn main() -> Result<(), htpasswd::ParseFailure> {
+//! # fn main() -> Result<(), htpasswd_db::ParseFailure> {
 //! // the password is "secret"
 //! let htpasswd_contents = "username:$2y$05$xT4MzeZJQmgv7XQQGYbf/eP.ING1L9m.iOZF/yUQIYKmYnmEYkfme";
-//! let db = htpasswd::parse_htpasswd_str(htpasswd_contents)?;
+//! let db = htpasswd_db::parse_htpasswd_str(htpasswd_contents)?;
 //! assert_eq!(Ok(()), db.validate("username", "secret"));
 //! # Ok(())
 //! # }
@@ -64,12 +64,12 @@ impl PasswordDB {
     /// and returns `Ok(())` if both match. Otherwise, returns an
     /// error indicating the problem with the provided or the stored
     /// credentials.
-    pub fn validate<'a>(&self, user: &'a str, password: &str) -> Result<(), AuthError<'a>> {
+    pub fn validate(&self, user: &str, password: &str) -> Result<(), AuthError> {
         use crate::PasswordHash::*;
         match self
             .0
             .get(user)
-            .ok_or_else(|| BadCredentials::NoSuchUser(user))?
+            .ok_or_else(|| BadCredentials::NoSuchUser)?
         {
             Bcrypt(hash) => match bcrypt::verify(password, hash)? {
                 true => Ok(()),
@@ -223,9 +223,7 @@ bsf:$2y$05$9U5xoWYrBX687.C.MEhsae5LfOrlUqqMSfE2Cpo4K.jyvy3lA.Ijy",
             entries.validate("asf", "wrong")
         );
         assert_eq!(
-            Err(AuthError::NotAuthenticated(BadCredentials::NoSuchUser(
-                "unperson"
-            ))),
+            Err(AuthError::NotAuthenticated(BadCredentials::NoSuchUser)),
             entries.validate("unperson", "unpassword")
         );
     }
