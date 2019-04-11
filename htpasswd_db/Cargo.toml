@@ -1,0 +1,32 @@
+[package]
+edition = '2018'
+name = "htpasswd_db"
+version = "0.0.1-dev"
+authors = ["Andreas Fuchs <asf@boinkor.net>"]
+license = "MIT"
+repository = "https://github.com/antifuchs/htpasswd"
+readme = "README.md"
+description = "Parse .htpasswd files"
+documentation = "https://docs.rs/htpasswd"
+
+[badges]
+travis-ci = { repository = "antifuchs/htpasswd", branch = "master" }
+maintenance = { status = "passively-maintained" }
+
+[package.metadata.release]
+sign-commit = false
+upload-doc = false
+pre-release-commit-message = "Release {{version}} 🎉🎉"
+pro-release-commit-message = "Start next development iteration {{version}}"
+tag-message = "Release {{prefix}}{{version}}"
+dev-version-ext = "dev"
+tag-prefix = "v"
+
+[package.metadata.template_ci.clippy]
+allow_failure = false
+version = "stable"
+
+[dependencies]
+nom = "4.2.3"
+nom_locate = "0.3.1"
+bcrypt = "0.4.0"
