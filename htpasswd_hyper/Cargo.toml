@@ -1,0 +1,10 @@
+[package]
+name = "htpasswd_hyper"
+version = "0.1.0"
+authors = ["Andreas Fuchs <asf@boinkor.net>"]
+edition = "2018"
+
+[dependencies]
+hyper = "0.12.27"
+headers = "0.2.1"
+htpasswd_db = { path = "../htpasswd_db" }
