@@ -1,7 +1,7 @@
 use super::{Input, PasswordHash};
 use nom::types::CompleteStr;
 use nom::*;
-use nom_locate::{position, LocatedSpan};
+use nom_locate::LocatedSpan;
 use std::collections::hash_map::HashMap;
 use std::fmt;
 
@@ -51,44 +51,33 @@ type Span<'a> = LocatedSpan<Input<'a>>;
 /// Indicates nom failed to parse a .htaccess file.
 type ParseError<'a> = Err<Span<'a>, ParseErrorKind>;
 
-struct PWToken<'a> {
-    position: Span<'a>,
-    hash: PasswordHash,
-}
+#[derive(PartialEq, Debug)]
+struct UserToken(String);
 
-struct UserToken<'a> {
-    position: Span<'a>,
-    username: String,
-}
-
-named!(bcrypt_pw<Span, PWToken>,
-       do_parse!(position: position!() >>
-                 peek!(alt_complete!(tag!("$2a$") | tag!("$2y$") | tag!("$2b$"))) >>
+named!(bcrypt_pw<Span, PasswordHash>,
+       do_parse!(peek!(alt_complete!(tag!("$2a$") | tag!("$2y$") | tag!("$2b$"))) >>
                  pw: not_line_ending >>
-                 (PWToken{position, hash: PasswordHash::Bcrypt(pw.to_string()),})
+                 (PasswordHash::Bcrypt(pw.to_string()))
        )
 );
 
-named!(sha1_pw<Span, PWToken>,
-       do_parse!(position: position!() >>
-                 tag!("{SHA}") >>
+named!(sha1_pw<Span, PasswordHash>,
+       do_parse!(tag!("{SHA}") >>
                  pw: not_line_ending >>
-                 (PWToken{position, hash: PasswordHash::SHA1(pw.to_string())}))
+                 (PasswordHash::SHA1(pw.to_string())))
 );
 
-named!(md5_pw<Span, PWToken>,
-       do_parse!(position: position!() >>
-                 tag!("$apr1$") >>
+named!(md5_pw<Span, PasswordHash>,
+       do_parse!(tag!("$apr1$") >>
                  pw: not_line_ending >>
-                 (PWToken{position, hash: PasswordHash::MD5(pw.to_string())})));
+                 (PasswordHash::MD5(pw.to_string()))));
 
-named!(crypt_pw<Span, PWToken>,
-       do_parse!(position: position!() >>
-                 pw: not_line_ending >>
-                 (PWToken{position, hash: PasswordHash::Crypt(pw.to_string())}))
+named!(crypt_pw<Span, PasswordHash>,
+       do_parse!(pw: not_line_ending >>
+                 (PasswordHash::Crypt(pw.to_string())))
 );
 
-named!(password<Span, PWToken, ParseErrorKind>,
+named!(password<Span, PasswordHash, ParseErrorKind>,
        return_error!(ErrorKind::Custom(ParseErrorKind::BadPassword),
                      fix_error!(ParseErrorKind,
                                alt!(bcrypt_pw | sha1_pw | md5_pw | crypt_pw))));
@@ -96,18 +85,17 @@ named!(password<Span, PWToken, ParseErrorKind>,
 named!(user<Span, UserToken, ParseErrorKind>,
        return_error!(ErrorKind::Custom(ParseErrorKind::BadUsername),
                      fix_error!(ParseErrorKind,
-                                do_parse!(position: position!() >>
-                                          user: terminated!(is_not!(":"), tag!(":")) >>
-                                          (UserToken{position, username: user.fragment.to_string()})))));
+                                do_parse!(user: terminated!(is_not!(":"), tag!(":")) >>
+                                          (UserToken(user.fragment.to_string()))))));
 
 named!(
-    entry<Span, (UserToken, PWToken), ParseErrorKind>,
+    entry<Span, (UserToken, PasswordHash), ParseErrorKind>,
     do_parse!(user: user >>
               pw_hash: password >>
               ((user, pw_hash)))
 );
 
-named!(entries<Span, Vec<(UserToken, PWToken)>, ParseErrorKind>,
+named!(entries<Span, Vec<(UserToken, PasswordHash)>, ParseErrorKind>,
        do_parse!(entries: terminated!(separated_list!(fix_error!(ParseErrorKind, tag!("\n")),
                                                       entry),
                                       fix_error!(ParseErrorKind, opt!(line_ending))) >>
@@ -156,10 +144,7 @@ impl<'a> From<ParseError<'a>> for ParseFailure {
 pub(crate) fn parse_entries(input: &str) -> Result<HashMap<String, PasswordHash>, ParseFailure> {
     let input = Span::new(CompleteStr::from(input));
     match entries(input) {
-        Ok((_rest, entries)) => Ok(entries
-            .into_iter()
-            .map(|(ut, pwt)| (ut.username, pwt.hash))
-            .collect()),
+        Ok((_rest, entries)) => Ok(entries.into_iter().map(|(ut, pwt)| (ut.0, pwt)).collect()),
 
         Result::Err(e) => Result::Err(e.into()),
     }
@@ -177,27 +162,27 @@ mod tests {
     fn password_tag() {
         assert_eq!(
             PasswordHash::Bcrypt("$2y$foobar".into()),
-            password(_in("$2y$foobar")).unwrap().1.hash
+            password(_in("$2y$foobar")).unwrap().1
         );
         assert_eq!(
             PasswordHash::Bcrypt("$2y$foobar".into()),
-            password(_in("$2y$foobar\n")).unwrap().1.hash
+            password(_in("$2y$foobar\n")).unwrap().1
         );
         assert_eq!(
             PasswordHash::Bcrypt("$2y$foobar".into()),
-            password(_in("$2y$foobar\r\n")).unwrap().1.hash
+            password(_in("$2y$foobar\r\n")).unwrap().1
         );
         assert_eq!(
             PasswordHash::SHA1("foobar".into()),
-            password(_in("{SHA}foobar\n")).unwrap().1.hash
+            password(_in("{SHA}foobar\n")).unwrap().1
         );
         assert_eq!(
             PasswordHash::MD5("foobar".into()),
-            password(_in("$apr1$foobar\n")).unwrap().1.hash
+            password(_in("$apr1$foobar\n")).unwrap().1
         );
         assert_eq!(
             PasswordHash::Crypt("foobar".into()),
-            password(_in("foobar\n")).unwrap().1.hash
+            password(_in("foobar\n")).unwrap().1
         );
     }
 
@@ -205,8 +190,11 @@ mod tests {
     fn whole_line() {
         let entry = entry(_in("asf:$2y$foobar\n")).unwrap().1;
         assert_eq!(
-            ("asf".to_string(), PasswordHash::Bcrypt("$2y$foobar".into())),
-            (entry.0.username, entry.1.hash)
+            (
+                UserToken("asf".to_string()),
+                PasswordHash::Bcrypt("$2y$foobar".into())
+            ),
+            (entry.0, entry.1)
         )
     }
 }
