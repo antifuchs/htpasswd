@@ -29,7 +29,13 @@
 use bcrypt;
 use nom;
 use std::collections::hash_map::HashMap;
+use std::fmt;
+use std::fs::read_to_string;
+use std::io;
+use std::io::Read;
+use std::path::Path;
 use std::str;
+use std::str::FromStr;
 
 // The type to use as input to parsers in this crate.
 pub use nom::types::CompleteStr as Input;
@@ -74,11 +80,77 @@ impl PasswordDB {
     }
 }
 
+impl FromStr for PasswordDB {
+    type Err = ParseFailure;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_htpasswd_str(s)
+    }
+}
+
 /// Parses an htpasswd-formatted string and returns the entries in it
 /// as a hash table, mapping user names to password hashes.
-pub fn parse_htpasswd_str<'a>(contents: &'a str) -> Result<PasswordDB, ParseFailure> {
+pub fn parse_htpasswd_str(contents: &str) -> Result<PasswordDB, ParseFailure> {
     let entries = parse::parse_entries(contents)?;
     Ok(PasswordDB(entries))
+}
+
+#[derive(Debug)]
+pub enum LoadFailure {
+    Parse(ParseFailure),
+    Io(io::Error),
+}
+
+impl From<io::Error> for LoadFailure {
+    fn from(f: io::Error) -> Self {
+        LoadFailure::Io(f)
+    }
+}
+
+impl From<ParseFailure> for LoadFailure {
+    fn from(f: ParseFailure) -> Self {
+        LoadFailure::Parse(f)
+    }
+}
+
+impl fmt::Display for LoadFailure {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use LoadFailure::*;
+        write!(
+            f,
+            "loading htpasswd data: {}",
+            match self {
+                Parse(pf) => format!("parse failure:{}:{}: {}", pf.line, pf.column, pf.kind),
+                Io(io) => format!("reading: {}", io),
+            }
+        )
+    }
+}
+
+/// Allows loading .htpasswd data from certain types, e.g. `io.Read`
+/// and `Path` objects. Note that due to the way the parser is
+/// implemented, the entire input stream has to be read before
+/// parsing.
+trait HtpasswdLoad {
+    /// Reads self to the end and parses a .htpasswd database from it.
+    fn load_htpasswd(&mut self) -> Result<PasswordDB, LoadFailure>;
+}
+
+impl<T> HtpasswdLoad for T
+where
+    T: Read + Sized,
+{
+    fn load_htpasswd(&mut self) -> Result<PasswordDB, LoadFailure> {
+        let mut str = String::new();
+        self.read_to_string(&mut str)?;
+        Ok(parse_htpasswd_str(&str)?)
+    }
+}
+
+impl HtpasswdLoad for Path {
+    fn load_htpasswd(&mut self) -> Result<PasswordDB, LoadFailure> {
+        let contents = read_to_string(self)?;
+        Ok(parse_htpasswd_str(&contents)?)
+    }
 }
 
 #[cfg(test)]
