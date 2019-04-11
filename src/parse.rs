@@ -4,6 +4,9 @@ use nom::*;
 use nom_locate::LocatedSpan;
 use std::collections::hash_map::HashMap;
 use std::fmt;
+use std::ops::Range;
+use std::ops::RangeFrom;
+use std::ops::RangeTo;
 
 /// A list of things that can go wrong in parsing.
 #[derive(Debug, PartialEq, Clone)]
@@ -54,26 +57,45 @@ type ParseError<'a> = Err<Span<'a>, ParseErrorKind>;
 #[derive(PartialEq, Debug)]
 struct UserToken(String);
 
+fn not_record_ending<T>(input: T) -> IResult<T, T>
+where
+    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+    T: InputIter + InputLength + AtEof,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar,
+    <T as InputIter>::RawItem: AsChar,
+{
+    match not_line_ending(input) {
+        Ok((rest, line)) => {
+            if line.input_len() == 0 {
+                return Result::Err(Err::Failure(Context::Code(rest, ErrorKind::Custom(0u32))));
+            }
+            Ok((rest, line))
+        }
+        e => e,
+    }
+}
+
 named!(bcrypt_pw<Span, PasswordHash>,
        do_parse!(peek!(alt_complete!(tag!("$2a$") | tag!("$2y$") | tag!("$2b$"))) >>
-                 pw: not_line_ending >>
+                 pw: not_record_ending >>
                  (PasswordHash::Bcrypt(pw.to_string()))
        )
 );
 
 named!(sha1_pw<Span, PasswordHash>,
        do_parse!(tag!("{SHA}") >>
-                 pw: not_line_ending >>
+                 pw: not_record_ending >>
                  (PasswordHash::SHA1(pw.to_string())))
 );
 
 named!(md5_pw<Span, PasswordHash>,
        do_parse!(tag!("$apr1$") >>
-                 pw: not_line_ending >>
+                 pw: not_record_ending >>
                  (PasswordHash::MD5(pw.to_string()))));
 
 named!(crypt_pw<Span, PasswordHash>,
-       do_parse!(pw: not_line_ending >>
+       do_parse!(pw: not_record_ending >>
                  (PasswordHash::Crypt(pw.to_string())))
 );
 
@@ -104,12 +126,20 @@ named!(entries<Span, Vec<(UserToken, PasswordHash)>, ParseErrorKind>,
                  (entries))
 );
 
+/// An error indicating something went wrong in parsing a .htaccess file.
 #[derive(Debug, PartialEq)]
 pub struct ParseFailure {
-    kind: ParseErrorKind,
-    offset: usize,
-    line: u32,
-    column: usize,
+    /// A description of the problem
+    pub kind: ParseErrorKind,
+
+    /// The byte offset in the file at which the problem was detected.
+    pub offset: usize,
+
+    /// The line containing the problem.
+    pub line: u32,
+
+    /// The approximate column containing the problem.
+    pub column: usize,
 }
 
 impl Default for ParseFailure {

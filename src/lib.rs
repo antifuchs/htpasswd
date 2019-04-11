@@ -38,7 +38,7 @@ mod errors;
 mod parse;
 
 pub use errors::*;
-pub use parse::ParseFailure;
+pub use parse::{ParseErrorKind, ParseFailure};
 
 /// Represents a password hashed with a particular method.
 #[derive(Debug, PartialEq)]
@@ -50,6 +50,7 @@ enum PasswordHash {
 }
 
 /// An in-memory representation of a `.htpasswd` file.
+#[derive(Debug, PartialEq)]
 pub struct PasswordDB(HashMap<String, PasswordHash>);
 
 impl PasswordDB {
@@ -85,12 +86,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn garbage_at_end() {
-        assert!(parse_htpasswd_str(
-            "asf:$2y$05$6mQlzTSUkBbyHDU7XIwQaO3wOEDZpUdYR4YxRXgM2gqe/nwJSy.96
-___"
-        )
-        .is_err());
+    fn bad_fields() {
+        assert_eq!(
+            Err(ParseFailure {
+                kind: ParseErrorKind::BadPassword,
+                offset: 69,
+                line: 2,
+                column: 5
+            }),
+            parse_htpasswd_str(
+                "asf:$2y$05$6mQlzTSUkBbyHDU7XIwQaO3wOEDZpUdYR4YxRXgM2gqe/nwJSy.96
+___:"
+            )
+        );
+        assert_eq!(
+            Err(ParseFailure {
+                kind: ParseErrorKind::BadUsername,
+                offset: 0,
+                line: 1,
+                column: 1
+            }),
+            parse_htpasswd_str("___")
+        );
+        assert_eq!(
+            Err(ParseFailure {
+                kind: ParseErrorKind::BadUsername,
+                offset: 0,
+                line: 1,
+                column: 1
+            }),
+            parse_htpasswd_str("")
+        );
+        assert_eq!(
+            Err(ParseFailure {
+                kind: ParseErrorKind::BadUsername,
+                offset: 0,
+                line: 1,
+                column: 1
+            }),
+            parse_htpasswd_str(":")
+        );
+        assert_eq!(
+            Err(ParseFailure {
+                kind: ParseErrorKind::BadUsername,
+                offset: 0,
+                line: 1,
+                column: 1
+            }),
+            parse_htpasswd_str(":")
+        );
     }
 
     #[test]
