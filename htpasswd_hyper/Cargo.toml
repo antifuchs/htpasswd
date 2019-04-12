@@ -8,3 +8,4 @@ edition = "2018"
 hyper = "0.12.27"
 headers = "0.2.1"
 htpasswd_db = { path = "../htpasswd_db" }
+futures = "^0.1"
