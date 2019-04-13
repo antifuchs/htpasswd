@@ -1,10 +1,11 @@
 use hyper::StatusCode;
 use hyper::{service::Service, Request};
 use hyper::{Body, Response};
+use std::ops::Deref;
 
 use futures::future::FutureResult;
 use headers::{authorization::Basic, Authorization, HeaderMapExt};
-use htpasswd_db::{AuthError, BadCredentials, LoadFailure, PasswordDB};
+use htpasswd_db::{AuthError, BadCredentials, PasswordDB};
 
 /// Authenticates a request to the server using the HTTP Basic
 /// Authorization protocol against a password DB loaded from a
@@ -17,16 +18,8 @@ pub fn basic_auth_via_htpasswd<T>(req: &Request<T>, db: &PasswordDB) -> Result<(
 }
 
 pub trait PasswordDBSource {
-    fn get(&self) -> Result<PasswordDB, LoadFailure>;
-}
-
-impl<T> PasswordDBSource for T
-where
-    T: Fn() -> Result<PasswordDB, LoadFailure>,
-{
-    fn get(&self) -> Result<PasswordDB, LoadFailure> {
-        self()
-    }
+    type Source: Sized + Deref<Target = Option<PasswordDB>>;
+    fn get(&self) -> Self::Source;
 }
 
 pub struct Authenticate<T, S>
@@ -62,9 +55,10 @@ where
     type Future = FutureResult<Response<Body>, hyper::Error>;
 
     fn call(&mut self, request: Request<Self::ReqBody>) -> Self::Future {
-        match self.source.get() {
-            Ok(db) => {
-                if !basic_auth_via_htpasswd(&request, &db).is_ok() {
+        let source = self.source.get();
+        match source.deref() {
+            Some(db) => {
+                if !basic_auth_via_htpasswd(&request, db).is_ok() {
                     return futures::future::ok(
                         Response::builder()
                             .status(StatusCode::UNAUTHORIZED)
@@ -75,11 +69,11 @@ where
                     self.upstream.call(request).into()
                 }
             }
-            Err(f) => {
+            None => {
                 return futures::future::ok(
                     Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Body::from(f.to_string()))
+                        .body(Body::from("No password DB available"))
                         .expect("Error"),
                 );
             }
