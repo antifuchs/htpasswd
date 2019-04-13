@@ -1,3 +1,4 @@
+use htpasswd_db::PasswordDBSource;
 use hyper::StatusCode;
 use hyper::{service::Service, Request};
 use hyper::{Body, Response};
@@ -15,11 +16,6 @@ pub fn basic_auth_via_htpasswd<T>(req: &Request<T>, db: &PasswordDB) -> Result<(
         None => Err(AuthError::NotAuthenticated(BadCredentials::InvalidPassword)),
         Some(auth) => db.validate(auth.0.username(), auth.0.password()),
     }
-}
-
-pub trait PasswordDBSource {
-    type Source: Sized + Deref<Target = Option<PasswordDB>>;
-    fn get(&self) -> Self::Source;
 }
 
 pub struct Authenticate<T, S>
@@ -55,10 +51,9 @@ where
     type Future = FutureResult<Response<Body>, hyper::Error>;
 
     fn call(&mut self, request: Request<Self::ReqBody>) -> Self::Future {
-        let source = self.source.get();
-        match source.deref() {
-            Some(db) => {
-                if !basic_auth_via_htpasswd(&request, db).is_ok() {
+        match self.source.get().deref() {
+            Ok(db) => {
+                if !basic_auth_via_htpasswd(&request, &db).is_ok() {
                     return futures::future::ok(
                         Response::builder()
                             .status(StatusCode::UNAUTHORIZED)
@@ -69,11 +64,11 @@ where
                     self.upstream.call(request).into()
                 }
             }
-            None => {
+            Err(e) => {
                 return futures::future::ok(
                     Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Body::from("No password DB available"))
+                        .body(Body::from(e.to_string()))
                         .expect("Error"),
                 );
             }

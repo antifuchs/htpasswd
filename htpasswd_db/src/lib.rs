@@ -29,10 +29,12 @@
 use bcrypt;
 use nom;
 use std::collections::hash_map::HashMap;
+use std::error::Error;
 use std::fmt;
 use std::fs::read_to_string;
 use std::io;
 use std::io::Read;
+use std::ops::Deref;
 use std::path::Path;
 use std::str;
 use std::str::FromStr;
@@ -66,11 +68,7 @@ impl PasswordDB {
     /// credentials.
     pub fn validate(&self, user: &str, password: &str) -> Result<(), AuthError> {
         use crate::PasswordHash::*;
-        match self
-            .0
-            .get(user)
-            .ok_or_else(|| BadCredentials::NoSuchUser)?
-        {
+        match self.0.get(user).ok_or_else(|| BadCredentials::NoSuchUser)? {
             Bcrypt(hash) => match bcrypt::verify(password, hash)? {
                 true => Ok(()),
                 false => Err(BadCredentials::InvalidPassword)?,
@@ -153,6 +151,34 @@ impl HtpasswdLoad for Path {
     }
 }
 
+/// Describes some method of keeping a password DB loaded and updated in memory.
+///
+/// When using authentication middleware in a long-running server,
+/// using a regular PasswordDB is not always the easiest or most
+/// performant way to keep the database in sync with the database on
+/// disk: You might be tempted to load the password DB from disk every
+/// time a request is made.
+///
+/// Instead, you could implement a `PasswordDBSource`, e.g. keeping
+/// the actual DB behind a Mutex and updating it whenever the backing
+/// file changes.
+pub trait PasswordDBSource {
+    /// Any error that can occur from attempts to load the
+    /// `PasswordDB`. This will typically be `LoadFailure`.
+    type Error: Sized + Error;
+
+    /// The type returned by `get`. It's meant to be compatible with
+    /// `MutexGuard`, expected to be a RAII type that frees up the
+    /// underlying lock/resource when it is dropped.
+    type Reference: Sized + Deref<Target = Result<PasswordDB, Self::Error>>;
+
+    /// Return a RAII object that yields a `PasswordDB` if it was
+    /// recently refreshed according to the implementation's
+    /// criteria. Otherwise, returns the error that the last load
+    /// attempt
+    fn get(&self) -> Self::Reference;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,8 +193,7 @@ mod tests {
                 column: 5
             }),
             parse_htpasswd_str(
-                "asf:$2y$05$6mQlzTSUkBbyHDU7XIwQaO3wOEDZpUdYR4YxRXgM2gqe/nwJSy.96
-___:"
+                "asf:$2y$05$6mQlzTSUkBbyHDU7XIwQaO3wOEDZpUdYR4YxRXgM2gqe/nwJSy.96\n___:"
             )
         );
         assert_eq!(
