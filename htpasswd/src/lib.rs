@@ -16,10 +16,10 @@
 //! # Example
 //!
 //! ```rust
-//! # fn main() -> Result<(), htpasswd_db::ParseFailure> {
+//! # fn main() -> Result<(), htpasswd::ParseFailure> {
 //! // the password is "secret"
 //! let htpasswd_contents = "username:$2y$05$xT4MzeZJQmgv7XQQGYbf/eP.ING1L9m.iOZF/yUQIYKmYnmEYkfme";
-//! let db = htpasswd_db::parse_htpasswd_str(htpasswd_contents)?;
+//! let db = htpasswd::parse_htpasswd_str(htpasswd_contents)?;
 //! assert_eq!(Ok(()), db.validate("username", "secret"));
 //! # Ok(())
 //! # }

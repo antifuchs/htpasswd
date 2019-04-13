@@ -1,6 +1,6 @@
 [package]
 edition = '2018'
-name = "htpasswd_db"
+name = "htpasswd"
 version = "0.0.1-dev"
 authors = ["Andreas Fuchs <asf@boinkor.net>"]
 license = "MIT"

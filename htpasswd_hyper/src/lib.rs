@@ -1,12 +1,9 @@
-use htpasswd_db::PasswordDBSource;
-use hyper::StatusCode;
-use hyper::{service::Service, Request};
-use hyper::{Body, Response};
+use hyper::{service::Service, Body, Request, Response, StatusCode};
 use std::ops::Deref;
 
 use futures::future::FutureResult;
 use headers::{authorization::Basic, Authorization, HeaderMapExt};
-use htpasswd_db::{AuthError, BadCredentials, PasswordDB};
+use htpasswd::{AuthError, BadCredentials, PasswordDB, PasswordDBSource};
 
 /// Authenticates a request to the server using the HTTP Basic
 /// Authorization protocol against a password DB loaded from a
