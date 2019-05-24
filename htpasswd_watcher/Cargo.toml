@@ -1,0 +1,11 @@
+[package]
+name = "htpasswd_watcher"
+description = "Keep a .htpasswd's in-memory representation updated when the file changes"
+version = "0.1.0"
+authors = ["Andreas Fuchs <asf@boinkor.net>"]
+edition = "2018"
+
+[dependencies]
+htpasswd = { path = "../htpasswd" }
+hotwatch = "0.3.1"
+parking_lot = "0.7.1"

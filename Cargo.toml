@@ -3,4 +3,5 @@
 members = [
     "htpasswd",
     "htpasswd_hyper",
+    "htpasswd_watcher",
 ]

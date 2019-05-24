@@ -128,7 +128,7 @@ impl fmt::Display for LoadFailure {
 /// and `Path` objects. Note that due to the way the parser is
 /// implemented, the entire input stream has to be read before
 /// parsing.
-trait HtpasswdLoad {
+pub trait HtpasswdLoad {
     /// Reads self to the end and parses a .htpasswd database from it.
     fn load_htpasswd(&mut self) -> Result<PasswordDB, LoadFailure>;
 }
